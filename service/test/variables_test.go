@@ -51,7 +51,7 @@ func assertVariable(t *testing.T, variable *proc.Variable, expected varTest) {
 		t.Fatalf("Expected %s got %s (for variable %s)\n", expected.varType, cv.Type, expected.name)
 	}
 
-	if ss := cv.SinglelineString(); !matchStringOrPrefix(ss, expected.value) {
+	if ss := cv.SinglelineString(api.PrettyPrintSpecialTypes); !matchStringOrPrefix(ss, expected.value) {
 		t.Fatalf("Expected %#v got %#v (for variable %s)\n", expected.value, ss, expected.name)
 	}
 }
@@ -194,7 +194,7 @@ func TestVariableEvaluation(t *testing.T) {
 				assertVariable(t, variable, tc)
 			} else {
 				if err == nil {
-					t.Fatalf("Expected error %s, got no error: %s\n", tc.err.Error(), api.ConvertVar(variable).SinglelineString())
+					t.Fatalf("Expected error %s, got no error: %s\n", tc.err.Error(), api.ConvertVar(variable).SinglelineString(0))
 				}
 				if tc.err.Error() != err.Error() {
 					t.Fatalf("Unexpected error. Expected %s got %s", tc.err.Error(), err.Error())
@@ -273,7 +273,7 @@ func TestVariableEvaluationShort(t *testing.T) {
 				assertVariable(t, variable, tc)
 			} else {
 				if err == nil {
-					t.Fatalf("Expected error %s, got no error: %s\n", tc.err.Error(), api.ConvertVar(variable).SinglelineString())
+					t.Fatalf("Expected error %s, got no error: %s\n", tc.err.Error(), api.ConvertVar(variable).SinglelineString(0))
 				}
 				if tc.err.Error() != err.Error() {
 					t.Fatalf("Unexpected error. Expected %s got %s", tc.err.Error(), err.Error())
@@ -325,7 +325,7 @@ func TestMultilineVariableEvaluation(t *testing.T) {
 		for _, tc := range testcases {
 			variable, err := evalVariable(p, tc.name, pnormalLoadConfig)
 			assertNoError(err, t, "EvalVariable() returned an error")
-			if ms := api.ConvertVar(variable).MultilineString(""); !matchStringOrPrefix(ms, tc.value) {
+			if ms := api.ConvertVar(variable).MultilineString("", 0); !matchStringOrPrefix(ms, tc.value) {
 				t.Fatalf("Expected %s got %s (variable %s)\n", tc.value, ms, variable.Name)
 			}
 		}
@@ -478,7 +478,7 @@ func TestComplexSetting(t *testing.T) {
 			assertNoError(setVariable(p, "c128", setExpr), t, "SetVariable()")
 			variable, err := evalVariable(p, "c128", pnormalLoadConfig)
 			assertNoError(err, t, "EvalVariable()")
-			if s := api.ConvertVar(variable).SinglelineString(); s != value {
+			if s := api.ConvertVar(variable).SinglelineString(0); s != value {
 				t.Fatalf("Wrong value of c128: \"%s\", expected \"%s\" after setting it to \"%s\"", s, value, setExpr)
 			}
 		}
@@ -739,6 +739,9 @@ func TestEvalExpression(t *testing.T) {
 		// shortcircuited logical operators
 		{"nilstruct != nil && nilstruct.A == 1", false, "false", "false", "", nil},
 		{"nilstruct == nil || nilstruct.A == 1", false, "true", "true", "", nil},
+		
+		// special formatting for some standard library structs
+		{"tim1", true, `1977-05-25T18:00:00Z00:00`, `1977-05-25T18:00:00Z00:00`, "time.Time", nil},
 	}
 
 	ver, _ := goversion.Parse(runtime.Version())
@@ -781,7 +784,7 @@ func TestEvalAddrAndCast(t *testing.T) {
 		assertNoError(proc.Continue(p), t, "Continue() returned an error")
 		c1addr, err := evalVariable(p, "&c1", pnormalLoadConfig)
 		assertNoError(err, t, "EvalExpression(&c1)")
-		c1addrstr := api.ConvertVar(c1addr).SinglelineString()
+		c1addrstr := api.ConvertVar(c1addr).SinglelineString(0)
 		t.Logf("&c1 → %s", c1addrstr)
 		if !strings.HasPrefix(c1addrstr, "(*main.cstruct)(0x") {
 			t.Fatalf("Invalid value of EvalExpression(&c1) \"%s\"", c1addrstr)
@@ -789,7 +792,7 @@ func TestEvalAddrAndCast(t *testing.T) {
 
 		aaddr, err := evalVariable(p, "&(c1.pb.a)", pnormalLoadConfig)
 		assertNoError(err, t, "EvalExpression(&(c1.pb.a))")
-		aaddrstr := api.ConvertVar(aaddr).SinglelineString()
+		aaddrstr := api.ConvertVar(aaddr).SinglelineString(0)
 		t.Logf("&(c1.pb.a) → %s", aaddrstr)
 		if !strings.HasPrefix(aaddrstr, "(*main.astruct)(0x") {
 			t.Fatalf("invalid value of EvalExpression(&(c1.pb.a)) \"%s\"", aaddrstr)
@@ -797,7 +800,7 @@ func TestEvalAddrAndCast(t *testing.T) {
 
 		a, err := evalVariable(p, "*"+aaddrstr, pnormalLoadConfig)
 		assertNoError(err, t, fmt.Sprintf("EvalExpression(*%s)", aaddrstr))
-		t.Logf("*%s → %s", aaddrstr, api.ConvertVar(a).SinglelineString())
+		t.Logf("*%s → %s", aaddrstr, api.ConvertVar(a).SinglelineString(0))
 		assertVariable(t, a, varTest{aaddrstr, false, "main.astruct {A: 1, B: 2}", "", "main.astruct", nil})
 	})
 }
@@ -809,7 +812,7 @@ func TestMapEvaluation(t *testing.T) {
 		m1v, err := evalVariable(p, "m1", pnormalLoadConfig)
 		assertNoError(err, t, "EvalVariable()")
 		m1 := api.ConvertVar(m1v)
-		t.Logf("m1 = %v", m1.MultilineString(""))
+		t.Logf("m1 = %v", m1.MultilineString("", 0))
 
 		if m1.Type != "map[string]main.astruct" {
 			t.Fatalf("Wrong type: %s", m1.Type)
@@ -844,7 +847,7 @@ func TestUnsafePointer(t *testing.T) {
 		up1v, err := evalVariable(p, "up1", pnormalLoadConfig)
 		assertNoError(err, t, "EvalVariable(up1)")
 		up1 := api.ConvertVar(up1v)
-		if ss := up1.SinglelineString(); !strings.HasPrefix(ss, "unsafe.Pointer(") {
+		if ss := up1.SinglelineString(0); !strings.HasPrefix(ss, "unsafe.Pointer(") {
 			t.Fatalf("wrong value for up1: %s", ss)
 		}
 	})
@@ -1001,7 +1004,7 @@ func TestIssue1075(t *testing.T) {
 			vars, err := scope.LocalVariables(pnormalLoadConfig)
 			assertNoError(err, t, fmt.Sprintf("LocalVariables (%d)", i))
 			for _, v := range vars {
-				api.ConvertVar(v).SinglelineString()
+				api.ConvertVar(v).SinglelineString(0)
 			}
 		}
 	})

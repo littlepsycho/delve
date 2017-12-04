@@ -31,12 +31,14 @@ type cmdPrefix int
 const (
 	noPrefix = cmdPrefix(0)
 	onPrefix = cmdPrefix(1 << iota)
+	fmtPrefix
 )
 
 type callContext struct {
 	Prefix     cmdPrefix
 	Scope      api.EvalScope
 	Breakpoint *api.Breakpoint
+	FmtFlags   api.PrettyPrintFlags
 }
 
 func (ctx *callContext) scoped() bool {
@@ -151,7 +153,7 @@ Print out info for every goroutine. The flag controls what information is shown 
 	-g	displays location of go instruction that created the goroutine
 
 If no flag is specified the default is -u.`},
-		{aliases: []string{"goroutine"}, allowedPrefixes: onPrefix, cmdFn: c.goroutine, helpMsg: `Shows or changes current goroutine
+		{aliases: []string{"goroutine"}, allowedPrefixes: fmtPrefix | onPrefix, cmdFn: c.goroutine, helpMsg: `Shows or changes current goroutine
 
 	goroutine
 	goroutine <id>
@@ -161,7 +163,7 @@ Called without arguments it will show information about the current goroutine.
 Called with a single argument it will switch to the specified goroutine.
 Called with more arguments it will execute a command on the specified goroutine.`},
 		{aliases: []string{"breakpoints", "bp"}, cmdFn: breakpoints, helpMsg: "Print out info for active breakpoints."},
-		{aliases: []string{"print", "p"}, allowedPrefixes: onPrefix, cmdFn: printVar, helpMsg: `Evaluate an expression.
+		{aliases: []string{"print", "p"}, allowedPrefixes: fmtPrefix | onPrefix, cmdFn: printVar, helpMsg: `Evaluate an expression.
 
 	[goroutine <n>] [frame <m>] print <expression>
 
@@ -189,19 +191,19 @@ If regex is specified only the functions matching it will be returned.`},
 	types [<regex>]
 
 If regex is specified only the types matching it will be returned.`},
-		{aliases: []string{"args"}, allowedPrefixes: onPrefix, cmdFn: args, helpMsg: `Print function arguments.
+		{aliases: []string{"args"}, allowedPrefixes: fmtPrefix | onPrefix, cmdFn: args, helpMsg: `Print function arguments.
 
 	[goroutine <n>] [frame <m>] args [-v] [<regex>]
 
 If regex is specified only function arguments with a name matching it will be returned. If -v is specified more information about each function argument will be shown.`},
-		{aliases: []string{"locals"}, allowedPrefixes: onPrefix, cmdFn: locals, helpMsg: `Print local variables.
+		{aliases: []string{"locals"}, allowedPrefixes: fmtPrefix | onPrefix, cmdFn: locals, helpMsg: `Print local variables.
 
 	[goroutine <n>] [frame <m>] locals [-v] [<regex>]
 
 The name of variables that are shadowed in the current scope will be shown in parenthesis.
 
 If regex is specified only local variables with a name matching it will be returned. If -v is specified more information about each local variable will be shown.`},
-		{aliases: []string{"vars"}, cmdFn: vars, helpMsg: `Print package variables.
+		{aliases: []string{"vars"}, cmdFn: vars, allowedPrefixes: fmtPrefix, helpMsg: `Print package variables.
 
 	vars [-v] [<regex>]
 
@@ -299,6 +301,18 @@ Adds or removes a path substitution rule.
 	config alias <alias>
 
 Defines <alias> as an alias to <command> or removes an alias.`},
+		{aliases: []string{"fmt"}, cmdFn: c.fmtCommand, helpMsg: `Controls formatting of variables.
+		
+		fmt <options> print <expression>
+		fmt <options> locals
+		fmt <options> args
+		fmt <options> vars
+		
+Available options:
+	
+	-x	print numbers in hexadecimal
+	-o	print numbers in octal
+	-n	disables pretty-printing of math/big and time.Time types`},
 	}
 
 	if client == nil || client.Recorded() {
@@ -389,7 +403,7 @@ func (c *Commands) CallWithContext(cmdstr string, t *Term, ctx callContext) erro
 }
 
 func (c *Commands) Call(cmdstr string, t *Term) error {
-	ctx := callContext{Prefix: noPrefix, Scope: api.EvalScope{GoroutineID: -1, Frame: c.frame}}
+	ctx := callContext{Prefix: noPrefix, FmtFlags: api.PrettyPrintSpecialTypes, Scope: api.EvalScope{GoroutineID: -1, Frame: c.frame}}
 	return c.CallWithContext(cmdstr, t, ctx)
 }
 
@@ -1084,7 +1098,7 @@ func printVar(t *Term, ctx callContext, args string) error {
 		return err
 	}
 
-	fmt.Println(val.MultilineString(""))
+	fmt.Println(val.MultilineString("", ctx.FmtFlags))
 	return nil
 }
 
@@ -1128,7 +1142,7 @@ func setVar(t *Term, ctx callContext, args string) error {
 	return t.client.SetVariable(ctx.Scope, lexpr, rexpr)
 }
 
-func printFilteredVariables(varType string, vars []api.Variable, filter string, cfg api.LoadConfig) error {
+func printFilteredVariables(varType string, vars []api.Variable, filter string, cfg api.LoadConfig, flags api.PrettyPrintFlags) error {
 	reg, err := regexp.Compile(filter)
 	if err != nil {
 		return err
@@ -1142,9 +1156,9 @@ func printFilteredVariables(varType string, vars []api.Variable, filter string, 
 				name = "(" + name + ")"
 			}
 			if cfg == ShortLoadConfig {
-				fmt.Printf("%s = %s\n", name, v.SinglelineString())
+				fmt.Printf("%s = %s\n", name, v.SinglelineString(flags))
 			} else {
-				fmt.Printf("%s = %s\n", name, v.MultilineString(""))
+				fmt.Printf("%s = %s\n", name, v.MultilineString("", flags))
 			}
 		}
 	}
@@ -1201,7 +1215,7 @@ func args(t *Term, ctx callContext, args string) error {
 	if err != nil {
 		return err
 	}
-	return printFilteredVariables("args", vars, filter, cfg)
+	return printFilteredVariables("args", vars, filter, cfg, ctx.FmtFlags)
 }
 
 func locals(t *Term, ctx callContext, args string) error {
@@ -1217,7 +1231,7 @@ func locals(t *Term, ctx callContext, args string) error {
 	if err != nil {
 		return err
 	}
-	return printFilteredVariables("locals", locals, filter, cfg)
+	return printFilteredVariables("locals", locals, filter, cfg, ctx.FmtFlags)
 }
 
 func vars(t *Term, ctx callContext, args string) error {
@@ -1226,7 +1240,7 @@ func vars(t *Term, ctx callContext, args string) error {
 	if err != nil {
 		return err
 	}
-	return printFilteredVariables("vars", vars, filter, cfg)
+	return printFilteredVariables("vars", vars, filter, cfg, ctx.FmtFlags)
 }
 
 func regs(t *Term, ctx callContext, args string) error {
@@ -1443,10 +1457,10 @@ func printStack(stack []api.Stackframe, ind string, offsets bool) {
 		}
 
 		for j := range stack[i].Arguments {
-			fmt.Printf("%s    %s = %s\n", s, stack[i].Arguments[j].Name, stack[i].Arguments[j].SinglelineString())
+			fmt.Printf("%s    %s = %s\n", s, stack[i].Arguments[j].Name, stack[i].Arguments[j].SinglelineString(0))
 		}
 		for j := range stack[i].Locals {
-			fmt.Printf("%s    %s = %s\n", s, stack[i].Locals[j].Name, stack[i].Locals[j].SinglelineString())
+			fmt.Printf("%s    %s = %s\n", s, stack[i].Locals[j].Name, stack[i].Locals[j].SinglelineString(0))
 		}
 	}
 }
@@ -1517,7 +1531,7 @@ func printcontextThread(t *Term, th *api.Thread) {
 	if th.BreakpointInfo != nil && th.Breakpoint.LoadArgs != nil && *th.Breakpoint.LoadArgs == ShortLoadConfig {
 		var arg []string
 		for _, ar := range th.BreakpointInfo.Arguments {
-			arg = append(arg, ar.SinglelineString())
+			arg = append(arg, ar.SinglelineString(0))
 		}
 		args = strings.Join(arg, ", ")
 	}
@@ -1561,20 +1575,20 @@ func printcontextThread(t *Term, th *api.Thread) {
 		}
 
 		for _, v := range bpi.Variables {
-			fmt.Printf("\t%s: %s\n", v.Name, v.MultilineString("\t"))
+			fmt.Printf("\t%s: %s\n", v.Name, v.MultilineString("\t", 0))
 		}
 
 		for _, v := range bpi.Locals {
 			if *bp.LoadLocals == LongLoadConfig {
-				fmt.Printf("\t%s: %s\n", v.Name, v.MultilineString("\t"))
+				fmt.Printf("\t%s: %s\n", v.Name, v.MultilineString("\t", 0))
 			} else {
-				fmt.Printf("\t%s: %s\n", v.Name, v.SinglelineString())
+				fmt.Printf("\t%s: %s\n", v.Name, v.SinglelineString(0))
 			}
 		}
 
 		if bp.LoadArgs != nil && *bp.LoadArgs == LongLoadConfig {
 			for _, v := range bpi.Arguments {
-				fmt.Printf("\t%s: %s\n", v.Name, v.MultilineString("\t"))
+				fmt.Printf("\t%s: %s\n", v.Name, v.MultilineString("\t", 0))
 			}
 		}
 
@@ -1787,6 +1801,32 @@ func clearCheckpoint(t *Term, ctx callContext, args string) error {
 		return errors.New("clear-checkpoint argument must be a checkpoint ID")
 	}
 	return t.client.ClearCheckpoint(id)
+}
+
+func (c *Commands) fmtCommand(t *Term, ctx callContext, args string) error {
+	var flags api.PrettyPrintFlags = api.PrettyPrintSpecialTypes
+fmtLoop:
+	for {
+		v := strings.SplitN(args, " ", 2)
+		if len(v) <= 1 || len(v[0]) <= 0 {
+			break
+		}
+		switch v[0] {
+		case "-x":
+			flags |= api.PrettyPrintHexadecimal
+		case "-o":
+			flags |= api.PrettyPrintOctal
+		case "-n":
+			flags &= ^api.PrettyPrintSpecialTypes
+		default:
+			break fmtLoop
+		}
+		args = v[1]
+	}
+
+	ctx.Prefix |= fmtPrefix
+	ctx.FmtFlags = flags
+	return c.CallWithContext(args, t, ctx)
 }
 
 func formatBreakpointName(bp *api.Breakpoint, upcase bool) string {
