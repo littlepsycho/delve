@@ -783,3 +783,21 @@ func TestPrintContextParkedGoroutine(t *testing.T) {
 		}
 	})
 }
+
+func TestFmtPrefix(t *testing.T) {
+	withTestTerminal("testvariables2", t, func(term *FakeTerminal) {
+		term.MustExec("continue")
+		if out := term.MustExec("fmt -x p i1"); out != "0x1\n" {
+			t.Fatalf("bad hexadecimal output: %q", out)
+		}
+		if out := term.MustExec("goroutine 1 fmt -x p i1"); out != "0x1\n" {
+			t.Fatalf("bad hexadecimal output (with scope prefix): %q", out)
+		}
+		if out := term.MustExec("p tim1"); out != "1977-05-25T18:00:00Z00:00" {
+			t.Fatalf("bad time formatting: %q", out)
+		}
+		if out := term.MustExec("fmt -n p tim1"); out == "1977-05-25T18:00:00Z00:00" {
+			t.Fatalf("bad time formatting (with special formatting disabled): %q", out)
+		}
+	})
+}
