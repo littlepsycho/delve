@@ -92,7 +92,7 @@ func (v *Variable) writeTo(buf io.Writer, top, newlines, includeType bool, inden
 		}
 	case reflect.Struct:
 		if v.Value != "" && (flags&PrettyPrintSpecialTypes != 0) {
-			buf.Write([]byte(v.Value))
+			fmt.Fprintf(buf, "%s(%s)", v.Type, v.Value)
 		} else {
 			v.writeStructTo(buf, newlines, includeType, indent, flags)
 		}
