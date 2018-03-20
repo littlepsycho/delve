@@ -2,6 +2,7 @@ package goversion
 
 import (
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 )
@@ -149,4 +150,14 @@ func Installed() (GoVersion, bool) {
 	}
 
 	return Parse(s[len(goVersionPrefix):])
+}
+
+// RuntimeAfterOrEqual checks that the runtime version is major.minor or a
+// later version or a development version.
+func RuntimeAfterOrEqual(major, minor int) bool {
+	ver, _ := Parse(runtime.Version())
+	if ver.IsDevel() {
+		return true
+	}
+	return ver.AfterOrEqual(GoVersion{major, minor, -1, 0, 0, ""})
 }
