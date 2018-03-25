@@ -328,7 +328,7 @@ func StepOut(dbp Process) error {
 		if selg != nil {
 			deferPCEntry := selg.DeferPC()
 			if deferPCEntry != 0 {
-				_, _, deferfn := dbp.BinInfo().PCToLine(deferPCEntry)
+				deferfn := dbp.BinInfo().PCToFunc(deferPCEntry)
 				deferpc, err = FirstPCAfterPrologue(dbp, deferfn, false)
 				if err != nil {
 					return err

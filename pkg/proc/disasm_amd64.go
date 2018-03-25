@@ -166,6 +166,13 @@ func FirstPCAfterPrologue(p Process, fn *Function, sameline bool) (uint64, error
 		}
 	}
 
+	// Look for the first instruction with the stmt flag set, so that setting a
+	// breakpoint with file:line and with the function name always result on
+	// the same instruction being selected.
+	if pc, _, err := bi.LineToPC(text[0].Loc.File, text[0].Loc.Line); err == nil {
+		return pc, nil
+	}
+
 	return fn.Entry, nil
 }
 

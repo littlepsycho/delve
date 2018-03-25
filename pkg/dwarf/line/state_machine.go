@@ -91,7 +91,8 @@ func newStateMachine(dbl *DebugLineInfo, instructions []byte) *StateMachine {
 	for op := range standardopcodes {
 		opcodes[op] = standardopcodes[op]
 	}
-	return &StateMachine{dbl: dbl, file: dbl.FileNames[0].Path, line: 1, buf: bytes.NewBuffer(instructions), opcodes: opcodes}
+	sm := &StateMachine{dbl: dbl, file: dbl.FileNames[0].Path, line: 1, buf: bytes.NewBuffer(instructions), opcodes: opcodes, isStmt: dbl.Prologue.InitialIsStmt == uint8(1)}
+	return sm
 }
 
 // Returns all PCs for a given file/line. Useful for loops where the 'for' line
@@ -102,34 +103,17 @@ func (lineInfo *DebugLineInfo) AllPCsForFileLine(f string, l int) (pcs []uint64)
 	}
 
 	var (
-		foundFile bool
-		lastAddr  uint64
-		sm        = newStateMachine(lineInfo, lineInfo.Instructions)
+		lastAddr uint64
+		sm       = newStateMachine(lineInfo, lineInfo.Instructions)
 	)
 
 	for {
 		if err := sm.next(); err != nil {
 			break
 		}
-		if foundFile && sm.file != f {
-			return
-		}
-		if sm.line == l && sm.file == f && sm.address != lastAddr {
-			foundFile = true
-			if sm.valid {
-				pcs = append(pcs, sm.address)
-			}
-			// Keep going until we're on a different line. We only care about
-			// when a line comes back around (i.e. for loop) so get to next line,
-			// and try to find the line we care about again.
-			for {
-				if err := sm.next(); err != nil {
-					break
-				}
-				if l != sm.line {
-					break
-				}
-			}
+		if sm.line == l && sm.file == f && sm.address != lastAddr && sm.isStmt && sm.valid {
+			pcs = append(pcs, sm.address)
+			lastAddr = sm.address
 		}
 	}
 	return
@@ -137,7 +121,8 @@ func (lineInfo *DebugLineInfo) AllPCsForFileLine(f string, l int) (pcs []uint64)
 
 var NoSourceError = errors.New("no source available")
 
-func (lineInfo *DebugLineInfo) AllPCsBetween(begin, end uint64) ([]uint64, error) {
+// AllPCsBetween returns all PC addresses between begin and end (including both begin and end) that have the is_stmt flag set and do not belong to excludeFile:excludeLine
+func (lineInfo *DebugLineInfo) AllPCsBetween(begin, end uint64, excludeFile string, excludeLine int) ([]uint64, error) {
 	if lineInfo == nil {
 		return nil, NoSourceError
 	}
@@ -158,7 +143,7 @@ func (lineInfo *DebugLineInfo) AllPCsBetween(begin, end uint64) ([]uint64, error
 		if sm.address > end {
 			break
 		}
-		if sm.address >= begin && sm.address > lastaddr {
+		if (sm.address >= begin && sm.address > lastaddr) && sm.isStmt && ((sm.file != excludeFile) || (sm.line != excludeLine)) {
 			lastaddr = sm.address
 			pcs = append(pcs, sm.address)
 		}
@@ -261,7 +246,7 @@ func (lineInfo *DebugLineInfo) LineToPC(filename string, lineno int) uint64 {
 		}
 		if sm.line == lineno && sm.file == filename {
 			foundFile = true
-			if sm.valid {
+			if sm.valid && sm.isStmt {
 				return sm.address
 			}
 		}
@@ -308,10 +293,6 @@ func execSpecialOpcode(sm *StateMachine, instr byte) {
 		opcode  = uint8(instr)
 		decoded = opcode - sm.dbl.Prologue.OpcodeBase
 	)
-
-	if sm.dbl.Prologue.InitialIsStmt == uint8(1) {
-		sm.isStmt = true
-	}
 
 	sm.lastDelta = int(sm.dbl.Prologue.LineBase + int8(decoded%sm.dbl.Prologue.LineRange))
 	sm.line += sm.lastDelta
