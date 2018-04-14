@@ -177,7 +177,7 @@ func (v packageVarsByAddr) Len() int               { return len(v) }
 func (v packageVarsByAddr) Less(i int, j int) bool { return v[i].addr < v[j].addr }
 func (v packageVarsByAddr) Swap(i int, j int)      { v[i], v[j] = v[j], v[i] }
 
-func (bi *BinaryInfo) loadDebugInfoMaps(debugLineBytes []byte, wg *sync.WaitGroup) {
+func (bi *BinaryInfo) loadDebugInfoMaps(debugLineBytes []byte, wg *sync.WaitGroup, cont func()) {
 	if wg != nil {
 		defer wg.Done()
 	}
@@ -212,9 +212,15 @@ func (bi *BinaryInfo) loadDebugInfoMaps(debugLineBytes []byte, wg *sync.WaitGrou
 			if lineInfoOffset >= 0 && lineInfoOffset < int64(len(debugLineBytes)) {
 				cu.lineInfo = line.Parse(compdir, bytes.NewBuffer(debugLineBytes[lineInfoOffset:]))
 			}
-			if producer, _ := entry.Val(dwarf.AttrProducer).(string); cu.isgo && producer != "" {
-				semicolon := strings.Index(producer, ";")
-				cu.optimized = semicolon < 0 || !strings.Contains(producer[semicolon:], "-N") || !strings.Contains(producer[semicolon:], "-l")
+			cu.producer, _ = entry.Val(dwarf.AttrProducer).(string)
+			if cu.isgo {
+				semicolon := strings.Index(cu.producer, ";")
+				if semicolon < 0 {
+					cu.optimized = true
+				} else {
+					cu.optimized = !strings.Contains(cu.producer[semicolon:], "-N") || !strings.Contains(cu.producer[semicolon:], "-l")
+					cu.producer = cu.producer[:semicolon]
+				}
 			}
 			bi.compileUnits = append(bi.compileUnits, cu)
 
@@ -302,6 +308,10 @@ func (bi *BinaryInfo) loadDebugInfoMaps(debugLineBytes []byte, wg *sync.WaitGrou
 	}
 	sort.Strings(bi.Sources)
 	bi.Sources = uniq(bi.Sources)
+
+	if cont != nil {
+		cont()
+	}
 }
 
 func uniq(s []string) []string {
